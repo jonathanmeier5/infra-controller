@@ -2721,9 +2721,9 @@ impl SiteExplorer {
 
         // Existing endpoints with `exploration_requested` are enqueued
         // unconditionally and sit outside the per-iteration count budget.
-        // Operators set this flag to request a guaranteed next-tick attempt, so
-        // we must not let the routine refresh budget delay them. Concurrency is
-        // still bounded by the `concurrent_explorations` semaphore below.
+        // Operators and controllers set this flag when they block on the next
+        // report, so the routine refresh budget must not delay them. Concurrency
+        // is still bounded by the `concurrent_explorations` semaphore below.
         for (address, iface, endpoint) in priority_update_endpoints {
             explore_endpoint_data.push(Endpoint {
                 address,

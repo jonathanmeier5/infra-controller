@@ -399,8 +399,9 @@ pub struct EndpointReportNotCurrent;
 /// `try_update_last_exploration_error` records a failure and its latency without
 /// replacing the last successful exploration report.
 ///
-/// An applied write advances the report version, sets `waiting_for_explorer_refresh`,
-/// and clears `exploration_requested` in the caller's transaction. A missing
+/// An applied write advances the report version and sets
+/// `waiting_for_explorer_refresh` in the caller's transaction; it keeps
+/// `exploration_requested` only if the endpoint was already waiting. A missing
 /// endpoint or changed report version returns `NotApplied(EndpointReportNotCurrent)`;
 /// database failures remain errors.
 pub async fn try_update_last_exploration_error(
@@ -418,7 +419,7 @@ SET version=$1,
         '{LastExplorationLatency}', $3::jsonb, true
     ),
     waiting_for_explorer_refresh=true,
-    exploration_requested=false
+    exploration_requested=(waiting_for_explorer_refresh AND exploration_requested)
 WHERE address=$4 AND version=$5";
     let query_result = sqlx::query(query)
         .bind(new_version)
@@ -498,13 +499,13 @@ pub async fn re_explore_if_version_matches(
     }
 }
 
-/// set_waiting_for_explorer_refresh sets a flag that will be cleared next time try_update runs.
+/// Marks the endpoint as waiting for a fresh report and requests a priority
+/// exploration; `try_update` clears both flags when it stores the next report.
 pub async fn set_waiting_for_explorer_refresh(
     address: IpAddr,
     txn: &mut PgConnection,
 ) -> Result<(), DatabaseError> {
-    let query =
-        "UPDATE explored_endpoints SET waiting_for_explorer_refresh = true WHERE address = $1";
+    let query = "UPDATE explored_endpoints SET waiting_for_explorer_refresh = true, exploration_requested = true WHERE address = $1";
     sqlx::query(query)
         .bind(address)
         .execute(txn)
@@ -954,7 +955,9 @@ pub async fn set_pause_ingestion_and_poweron(
 
 #[cfg(test)]
 mod tests {
-    use model::site_explorer::{Chassis, NetworkAdapter};
+    use std::time::Duration;
+
+    use model::site_explorer::{Chassis, EndpointExplorationError, NetworkAdapter};
 
     use super::*;
 
@@ -1095,5 +1098,161 @@ mod tests {
         let endpoints = find_by_mac_address(&mut *txn, mac_address).await.unwrap();
         assert_eq!(endpoints.len(), 1);
         assert_eq!(endpoints[0].address, address);
+    }
+
+    /// `set_waiting_for_explorer_refresh` sets both `waiting_for_explorer_refresh`
+    /// and `exploration_requested`; a later `try_update` clears both.
+    #[crate::sqlx_test]
+    async fn set_waiting_for_explorer_refresh_requests_priority_exploration(pool: sqlx::PgPool) {
+        let mut txn = pool.begin().await.unwrap();
+        let address: IpAddr = "10.0.3.1".parse().unwrap();
+        let report = EndpointExplorationReport::default();
+        insert(address, &report, false, &mut txn).await.unwrap();
+
+        let before = find_all_by_ip(address, &mut txn).await.unwrap();
+        assert_eq!(before.len(), 1);
+        assert!(!before[0].waiting_for_explorer_refresh);
+        assert!(!before[0].exploration_requested);
+
+        set_waiting_for_explorer_refresh(address, &mut txn)
+            .await
+            .unwrap();
+
+        let waiting = find_all_by_ip(address, &mut txn).await.unwrap();
+        assert_eq!(waiting.len(), 1);
+        assert!(
+            waiting[0].waiting_for_explorer_refresh,
+            "endpoint is waiting for a refresh"
+        );
+        assert!(
+            waiting[0].exploration_requested,
+            "refresh request is served with priority"
+        );
+
+        assert_eq!(
+            try_update(address, waiting[0].report_version, &report, false, &mut txn)
+                .await
+                .unwrap(),
+            ConditionalWrite::Applied(()),
+            "report update applies to the current version"
+        );
+
+        let after = find_all_by_ip(address, &mut txn).await.unwrap();
+        assert_eq!(after.len(), 1);
+        assert!(!after[0].waiting_for_explorer_refresh);
+        assert!(!after[0].exploration_requested);
+    }
+
+    /// A failed probe records the error, bumps the version and parks the endpoint
+    /// with `waiting_for_explorer_refresh`, keeping `exploration_requested` only
+    /// when the endpoint was already waiting.
+    #[crate::sqlx_test]
+    async fn failed_exploration_keeps_request_only_while_waiting_for_refresh(pool: sqlx::PgPool) {
+        enum Request {
+            /// `set_waiting_for_explorer_refresh` on an endpoint whose last
+            /// probe succeeded.
+            RefreshWait,
+            /// `re_explore_if_version_matches` on an endpoint whose last probe
+            /// succeeded.
+            OperatorAfterSuccess,
+        }
+        struct Case {
+            name: &'static str,
+            request: Request,
+            keeps_request: bool,
+        }
+        let cases = [
+            Case {
+                name: "refresh wait",
+                request: Request::RefreshWait,
+                keeps_request: true,
+            },
+            Case {
+                name: "operator request after a successful probe",
+                request: Request::OperatorAfterSuccess,
+                keeps_request: false,
+            },
+        ];
+        let address: IpAddr = "10.0.3.2".parse().unwrap();
+        let error = EndpointExplorationError::ConnectionTimeout {
+            details: "bmc rebooting".to_string(),
+        };
+        for case in cases {
+            let mut txn = pool.begin().await.unwrap();
+            insert(
+                address,
+                &EndpointExplorationReport::default(),
+                false,
+                &mut txn,
+            )
+            .await
+            .unwrap();
+            let inserted = find_all_by_ip(address, &mut txn).await.unwrap();
+            assert_eq!(inserted.len(), 1, "{}", case.name);
+            let version = inserted[0].report_version;
+            match case.request {
+                Request::RefreshWait => set_waiting_for_explorer_refresh(address, &mut txn)
+                    .await
+                    .unwrap(),
+                Request::OperatorAfterSuccess => {
+                    assert_eq!(
+                        re_explore_if_version_matches(address, version, &mut txn)
+                            .await
+                            .unwrap(),
+                        ConditionalWrite::Applied(()),
+                        "{}: operator request applies to the current version",
+                        case.name
+                    );
+                }
+            }
+
+            let requested = find_all_by_ip(address, &mut txn).await.unwrap();
+            assert_eq!(requested.len(), 1, "{}", case.name);
+            assert!(
+                requested[0].exploration_requested,
+                "{}: the request is queued before the probe",
+                case.name
+            );
+
+            let applied = try_update_last_exploration_error(
+                address,
+                requested[0].report_version,
+                &error,
+                Duration::from_secs(1),
+                &mut txn,
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                applied,
+                ConditionalWrite::Applied(()),
+                "{}: error update applies to the current version",
+                case.name
+            );
+
+            let failed = find_all_by_ip(address, &mut txn).await.unwrap();
+            assert_eq!(failed.len(), 1, "{}", case.name);
+            assert_eq!(
+                failed[0].report.last_exploration_error.as_ref(),
+                Some(&error),
+                "{}",
+                case.name
+            );
+            assert!(
+                failed[0].report_version.version_nr() > requested[0].report_version.version_nr(),
+                "{}: a failed probe still bumps the version",
+                case.name
+            );
+            assert!(
+                failed[0].waiting_for_explorer_refresh,
+                "{}: endpoint stays parked until a report is stored",
+                case.name
+            );
+            assert_eq!(
+                failed[0].exploration_requested, case.keeps_request,
+                "{}: exploration_requested after the failed probe",
+                case.name
+            );
+        }
     }
 }
