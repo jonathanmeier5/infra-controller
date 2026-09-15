@@ -105,6 +105,7 @@ vault:
     ## `credential add-uefi` only writes Vault metadata (not the value) and preingestion
     ## logs "Missing credential machines/all_{dpus,hosts}/site_default/uefi-metadata-items/auth".
     ## SITE-SPECIFIC SECRET: blank the passwords before committing/MR; operator populates per site.
+    ## While vault.siteCredentials below is enabled it owns these two paths and the job skips them here.
     - path: "machines/all_dpus/site_default/uefi-metadata-items/auth"
       data:
         UsernamePassword:
@@ -115,6 +116,27 @@ vault:
         UsernamePassword:
           username: ""
           password: ""          # SITE SECRET: your host UEFI password — populate per site
+  ## Site-wide BMC root and site-default UEFI credentials seeded into the KV
+  ## mount by vault-config-job; requires configJob.enabled.
+  ## See README.md, "Seeding site credentials".
+  siteCredentials:
+    enabled: false
+    ## machines/bmc/site/root - the site-wide BMC root that site-explorer
+    ## rotates every BMC to. Keep the password distinct from the factory
+    ## defaults. NICO_DPF_BMC_ROOT_PASSWORD (setup.sh phase 6b) writes the same
+    ## path; set only one of the two, or give both the same password.
+    bmcRoot:
+      username: "root"
+      password: ""          # machine-a-tron test value: NicoSiteRoot1
+    ## machines/all_{dpus,hosts}/site_default/uefi-metadata-items/auth
+    ## The username may be empty; site-explorer only checks the password.
+    uefi:
+      dpu:
+        username: "admin"
+        password: ""        # machine-a-tron test value: bluefield
+      host:
+        username: "admin"
+        password: ""        # machine-a-tron test value: bluefield
 
 certManager:
   siteRoot:

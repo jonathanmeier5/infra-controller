@@ -14,6 +14,7 @@
 ##     - Create cert-manager-nico-policy + nico-vault-policy
 ##     - Enable KV v2 at secrets/
 ##     - Seed factory-default KV entries (machines/all_dpus/...)
+##     - Optionally seed site credentials from the nico-site-credentials Secret
 ##     - Enable AppRole, create nico role
 ##
 ## Token read from vaultroottoken K8s secret (written by unseal_vault.sh).
@@ -141,6 +142,23 @@ spec:
                 secretKeyRef:
                   name: nico-vault-token
                   key: token
+            {{- if .Values.vault.siteCredentials.enabled }}
+            - name: SITE_CREDENTIAL_BMC_ROOT
+              valueFrom:
+                secretKeyRef:
+                  name: nico-site-credentials
+                  key: bmc_site_root
+            - name: SITE_CREDENTIAL_UEFI_DPU
+              valueFrom:
+                secretKeyRef:
+                  name: nico-site-credentials
+                  key: uefi_dpu_site_default
+            - name: SITE_CREDENTIAL_UEFI_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: nico-site-credentials
+                  key: uefi_host_site_default
+            {{- end }}
           volumeMounts:
             - name: approle-creds
               mountPath: /approle-creds
@@ -321,10 +339,26 @@ spec:
               vault secrets enable -path={{ .Values.vault.kvMount }} kv-v2 2>/dev/null || true
 
               {{- range .Values.vault.kvSeeds }}
+              {{- /* vault.siteCredentials owns these paths while enabled; write each path once. */}}
+              {{- if not (and $.Values.vault.siteCredentials.enabled (has .path (list "machines/bmc/site/root" "machines/all_dpus/site_default/uefi-metadata-items/auth" "machines/all_hosts/site_default/uefi-metadata-items/auth"))) }}
               echo "Seeding {{ $.Values.vault.kvMount }}/{{ .path }}..."
               vault kv put {{ $.Values.vault.kvMount }}/{{ .path }} - <<'KVSEED'
               {{ .data | toJson }}
               KVSEED
+              {{- end }}
+              {{- end }}
+              {{- if .Values.vault.siteCredentials.enabled }}
+
+              # ---- Site credentials ----
+              echo "Seeding {{ .Values.vault.kvMount }}/machines/bmc/site/root..."
+              printf '%s\n' "$SITE_CREDENTIAL_BMC_ROOT" \
+                | vault kv put {{ .Values.vault.kvMount }}/machines/bmc/site/root -
+              echo "Seeding {{ .Values.vault.kvMount }}/machines/all_dpus/site_default/uefi-metadata-items/auth..."
+              printf '%s\n' "$SITE_CREDENTIAL_UEFI_DPU" \
+                | vault kv put {{ .Values.vault.kvMount }}/machines/all_dpus/site_default/uefi-metadata-items/auth -
+              echo "Seeding {{ .Values.vault.kvMount }}/machines/all_hosts/site_default/uefi-metadata-items/auth..."
+              printf '%s\n' "$SITE_CREDENTIAL_UEFI_HOST" \
+                | vault kv put {{ .Values.vault.kvMount }}/machines/all_hosts/site_default/uefi-metadata-items/auth -
               {{- end }}
 
               echo "Enabling AppRole auth..."
