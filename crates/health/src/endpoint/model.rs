@@ -195,7 +195,7 @@ impl EndpointMetadata {
         }
     }
 
-    /// Returns the PHR component category represented by this endpoint metadata.
+    /// Returns the component category represented by this endpoint metadata.
     pub const fn component_type(&self) -> &'static str {
         match self {
             Self::Machine(_) => "compute_node",
