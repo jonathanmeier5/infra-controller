@@ -79,7 +79,9 @@ pub(crate) async fn add(
     let machine = parse_expected_machine_for_insert(request.into_inner(), None)?;
 
     let mut txn = api.txn_begin().await?;
-    db::expected_machine::create(&mut txn, machine).await?;
+    db::expected_machine::create(&mut txn, machine)
+        .await
+        .map_err(CarbideError::from)?;
 
     txn.commit().await?;
 
