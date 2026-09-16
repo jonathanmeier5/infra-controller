@@ -56,9 +56,41 @@ ufmMock:
 
 For the default `mat-0` pod and chart name, the endpoint is
 `https://nico-machine-a-tron-mat-0-bmc-mock.<namespace>.svc.cluster.local:1266`.
-The chart does not aggregate InfiniBand inventory across multiple
-machine-a-tron pods. A full `configFiles.matConfigs` override owns the complete
-MAT configuration, including its `[ufm_mock]` section.
+Each embedded mock exposes only its own pod's inventory; the protocol gateway
+below aggregates across pods. A full `configFiles.matConfigs` override owns the
+complete MAT configuration, including its `[ufm_mock]` section.
+
+### Protocol gateway
+
+In controller mode, `mat-k8s-controller.gateway.enabled: true` adds the
+`mat-protocol-gateway` container to the controller pod. The gateway takes the
+machine-a-tron instances the controller discovers and serves one UFM API whose
+InfiniBand inventory covers all of them, so a multi-pod deployment needs a
+single NICo fabric configuration. It listens over HTTPS behind the ClusterIP
+Service `<release>-mat-k8s-controller-gateway`; for a release named
+`nico-machine-a-tron` in `nico-system` the endpoint is
+`https://nico-machine-a-tron-mat-k8s-controller-gateway.nico-system.svc.cluster.local:8443`
+with `/ufmRestV3` as the UFM API path. The gateway exits and is restarted by
+the kubelet whenever the set of discovered instances changes. Partitions and
+other state created through the UFM API are lost on that restart; ports return
+with the first inventory poll and callers must re-create partitions once
+`/readyz` returns 200 again.
+
+The controller image must ship both binaries; `dev/k8s/machine-a-tron-controller/Dockerfile.gateway`
+builds it from the repository root. The `mat-k8s-controller` image published
+by this repository's CI is built from `./Dockerfile` and does not contain the
+gateway, so enable the gateway only with an image built from
+`Dockerfile.gateway`. The gateway's certificate is issued
+through `global.certificate.issuerRef` and it trusts that certificate's CA for
+the inventory requests unless `mat-k8s-controller.config.insecureSkipVerify`
+is set, which also skips verification for the gateway.
+
+| Value | Default | Description |
+|-------|---------|-------------|
+| `mat-k8s-controller.gateway.enabled` | `false` | Add the gateway container, Service, ConfigMap and Certificate |
+| `mat-k8s-controller.gateway.port` | `8443` | HTTPS port of the UFM API, the probes and the Service |
+| `mat-k8s-controller.gateway.existingAuthSecret` | `""` | Secret with a `token` key for UFM HTTP Basic auth; empty uses the `nico-machine-a-tron-ufm-mock-auth` Secret this chart generates, so set it with `ufmMock.existingAuthSecret`, `ufmMock.enabled: false` or a `nameOverride` |
+| `mat-k8s-controller.gateway.resources` | 100m/256Mi requests, 1 CPU/1Gi limits | Gateway container resources |
 
 ## Logging
 
