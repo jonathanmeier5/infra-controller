@@ -10,7 +10,7 @@ Validation plugin
 ## SYNOPSIS
 
 **nico-admin-cli machine-validation plugins create** \<**--name**\>
-\<**--image**\> \<**--entrypoint**\> \[**--parameters**\]
+\[**--type**\] \<**--image**\> \<**--entrypoint**\> \[**--parameters**\]
 \[**--context**\] \[**--platform**\] \[**--timeout**\]
 \[**--privileged**\] \[**--host-access-full**\] \[**--extended**\]
 \[**--sort-by**\] \[**-h**\|**--help**\]
@@ -22,6 +22,12 @@ Create an OCI Machine Validation plugin
 ## OPTIONS
 
 **--name** *\<NAME\>*  
+**--type** *\<PLUGIN_TYPE\>* \[default: container\]<br>
+
+*Possible values:*
+
+-   container
+
 **--image** *\<IMAGE\>*  
 **--entrypoint** *\<ENTRYPOINT\>*  
 **--parameters** *\<PARAMETERS\>* \[default: {}\]  

@@ -1124,8 +1124,13 @@ be propagated there by DPF.
 | `stale_run_timeout` | `Duration` | `24h` | Grace period before an active validation run is considered stale. Values below `90s` are raised to `90s` to avoid marking healthy heartbeat-based runs stale. |
 | `tests` | `Vec<MachineValidationTestConfig>` | `[]` | Per-test enable/disable overrides. |
 | `approved_plugin_registries` | `Vec<String>` | `[]` | Registries allowed for Machine Validation plugin images. Empty denies plugin registration; legacy tests are unaffected. |
+| `allowed_plugin_types` | `Vec<String>` | `["container"]` | Plugin execution types allowed for the site. Empty denies plugin registration; only `container` is supported today. |
 | `allow_privileged_plugins` | `bool` | `false` | Allows registration of plugins that request the privileged container profile. |
 | `allow_full_host_plugins` | `bool` | `false` | Allows registration of privileged plugins that request a writable host-root mount. Each revision still needs separate approval before it can be enabled. |
+| `attempt_logs.enabled` | `bool` | `true` | Persists plugin stdout/stderr chunks. When false, appended chunks are discarded. |
+| `attempt_logs.max_chunk_bytes` | `usize` | `16384` | Maximum stored UTF-8 bytes per chunk; must be greater than zero and no more than `16384` when enabled. |
+| `attempt_logs.max_attempt_bytes` | `usize` | `1048576` | Maximum total stored UTF-8 bytes per attempt; must be at least `max_chunk_bytes` and no more than `1048576` when enabled. |
+| `attempt_logs.retention` | `Duration` | `30d` | Retention for terminal-attempt logs. Cleanup runs in bounded batches even when Machine Validation is disabled. |
 
 ### `BomValidationConfig`
 
