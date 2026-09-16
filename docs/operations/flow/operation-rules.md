@@ -513,7 +513,7 @@ first; a dedicated final stage (4) verifies all component types simultaneously.
 
 ## Execution behavior
 
-Flow selects a rack-specific rule association first, then a global default for the operation, then a built-in fallback. The selected rule is embedded in workflow input before execution starts.
+Flow selects an explicit `rule_id` first, then a rack-specific rule association, then a global default for the operation, and finally a built-in fallback. An explicit rule that cannot be loaded returns an error instead of falling back. The selected rule is embedded in workflow input before execution starts.
 
 Stages run in order. A failed stage stops the task; earlier stages are not rolled back. Steps for component types absent from the rack are skipped. Activity retries can repeat external calls. The child-workflow execution timeout includes the configured retry budget, declared pre/post action timeouts, and a scheduling buffer; it is not equal to the step timeout.
 

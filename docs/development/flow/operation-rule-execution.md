@@ -4,7 +4,7 @@ Operator guide: [Operation Rules](../../operations/flow/operation-rules.md).
 
 ## Resolution and execution
 
-The task manager resolves a rack association, then a global operation default, then the built-in fallback. The resolved definition travels in workflow input rather than being reloaded from the database during execution.
+The task manager resolves an explicit `rule_id` first, then a rack association, then a global operation default, and finally the built-in fallback. Failure to load an explicit rule returns an error without trying lower-priority sources. The resolved definition travels in workflow input rather than being reloaded from the database during execution.
 
 The parent executes stages in ascending order. `executeGenericStageParallel` launches one `GenericComponentStepWorkflow` per component-type step with targets and waits for the stage. Missing target types are skipped. A stage failure stops the task without rolling back earlier hardware actions.
 

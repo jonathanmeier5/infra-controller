@@ -133,6 +133,13 @@ qualified racks"; that field is only valid when `target_spec` is omitted.
 `exclude_operation_run_ids` then removes materialized targets from prior
 operation runs from that base scope before selector application.
 
+The service limits the candidate scope to 100 rack targets. This limit is
+checked during scope lookup, before exclusions and percentage selection. A
+default or explicit base scope of 101 racks therefore fails even if the
+selector would choose only 1%. `CreateOperationRun` returns gRPC `Internal`
+with `operation run candidate scope exceeds target limit 100`; no run is
+created. Narrow the base scope before submitting the request.
+
 ### Operation template
 
 `OperationRunOperation` is a `oneof`. The supported operation is
