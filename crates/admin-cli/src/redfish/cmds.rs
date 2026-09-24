@@ -27,8 +27,8 @@ use libredfish::model::task::{Task, TaskState};
 use libredfish::model::update_service::ComponentType;
 use libredfish::model::{LinkStatus, ResourceStatus};
 use libredfish::{
-    Boot, Chassis, EnabledDisabled, EthernetInterface, NetworkDeviceFunction, NetworkPort, Redfish,
-    RedfishError, RoleId, SystemPowerControl,
+    Boot, Chassis, EnabledDisabled, EthernetInterface, NetworkDeviceFunction, NetworkPort,
+    PowerState, Redfish, RedfishError, RoleId, SystemPowerControl,
 };
 use mac_address::MacAddress;
 use prettytable::{Table, row};
@@ -81,6 +81,36 @@ pub(crate) async fn action(action: RedfishAction) -> color_eyre::Result<()> {
         }
         BootOnceUefiHttp => {
             redfish.boot_once(Boot::UefiHttp).await?;
+        }
+        BootOnceCd => {
+            boot_once_from_cd(redfish.as_ref()).await?;
+        }
+        ShowVirtualMedia => {
+            let slots = redfish.virtual_media().await?;
+            let mut table = Table::new();
+            table.add_row(row!["Id", "Inserted", "Image", "Media types"]);
+            for slot in &slots {
+                table.add_row(row![
+                    slot.id.as_deref().unwrap_or("-"),
+                    slot.is_inserted(),
+                    slot.image.as_deref().unwrap_or("-"),
+                    slot.media_types.join(", "),
+                ]);
+            }
+            table.printstd();
+        }
+        InsertVirtualMedia(args) => {
+            redfish
+                .insert_virtual_media(args.kind.into(), &args.image)
+                .await?;
+            println!("Inserted {} into the {} slot.", args.image, args.kind_name());
+        }
+        EjectVirtualMedia(args) => {
+            redfish.eject_virtual_media(args.kind.into()).await?;
+            println!("Ejected the {} slot.", args.kind_name());
+        }
+        VirtualMediaBoot(args) => {
+            virtual_media_boot(redfish.as_ref(), &args).await?;
         }
         ClearPending => {
             redfish.clear_pending().await?;
@@ -1020,4 +1050,90 @@ mod tests {
         assert!(!is_bmc_firmware_id("BlueField_FW_BMC_01"));
         assert!(!is_bmc_firmware_id("Something_FW_BMC_0"));
     }
+}
+
+/// Point the next boot at the virtual CD-ROM.
+///
+/// `Once` rather than `Continuous`: the installer reboots when it finishes, and
+/// a continuous override would send the host straight back into the installer.
+/// `UEFI` is set explicitly because some BMCs default to `Legacy`, which will
+/// not boot a UEFI-only image.
+async fn boot_once_from_cd(redfish: &dyn Redfish) -> color_eyre::Result<()> {
+    let job = redfish
+        .set_boot_override(libredfish::BootOverride {
+            target: libredfish::BootSourceOverrideTarget::Cd,
+            enabled: libredfish::BootSourceOverrideEnabled::Once,
+            mode: Some(libredfish::BootSourceOverrideMode::UEFI),
+            http_boot_uri: None,
+        })
+        .await?;
+    match job {
+        Some(job_id) => println!("Boot override scheduled as job {job_id}."),
+        None => println!("Boot override applied."),
+    }
+    Ok(())
+}
+
+/// Drive a whole virtual-media boot.
+///
+/// The order matters:
+///
+/// 1. Power off first. A `Once` override is consumed by the next boot, so a
+///    reset here could spend it before the media is attached.
+/// 2. Eject before inserting. Several BMCs refuse an insert into an occupied
+///    slot.
+/// 3. Insert, then set the override, then power on.
+async fn virtual_media_boot(
+    redfish: &dyn Redfish,
+    args: &super::args::VirtualMediaInsert,
+) -> color_eyre::Result<()> {
+    let kind = args.kind.into();
+
+    println!("1/5 Powering off...");
+    // Check the state first rather than powering off unconditionally. BMCs
+    // disagree about an off-to-off transition: some accept it, some answer
+    // HTTP 400, and some answer `UnnecessaryOperation`. Asking first avoids
+    // having to tell a harmless rejection apart from a real failure.
+    let power_state = redfish.get_power_state().await?;
+    if matches!(power_state, PowerState::Off) {
+        println!("     already off");
+    } else {
+        redfish.power(SystemPowerControl::ForceOff).await?;
+        wait_for_power_state(redfish, PowerState::Off).await?;
+    }
+
+    println!("2/5 Ejecting any existing media...");
+    redfish.eject_virtual_media(kind).await?;
+
+    println!("3/5 Inserting {}...", args.image);
+    redfish.insert_virtual_media(kind, &args.image).await?;
+
+    println!("4/5 Setting a one-time CD boot override...");
+    boot_once_from_cd(redfish).await?;
+
+    println!("5/5 Powering on...");
+    redfish.power(SystemPowerControl::On).await?;
+    wait_for_power_state(redfish, PowerState::On).await?;
+
+    println!("Done. The host should now boot from {}.", args.image);
+    println!("Run eject-virtual-media once the install finishes.");
+    Ok(())
+}
+
+/// Wait for the host to reach `wanted`, so the next step does not act on a
+/// transitional state such as `PoweringOff`.
+async fn wait_for_power_state(
+    redfish: &dyn Redfish,
+    wanted: PowerState,
+) -> color_eyre::Result<()> {
+    const ATTEMPTS: usize = 30;
+    for _ in 0..ATTEMPTS {
+        if redfish.get_power_state().await? == wanted {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    Err(eyre!(
+        "host did not reach power state {wanted} within {ATTEMPTS}s"
+    ))
 }

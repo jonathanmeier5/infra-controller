@@ -81,6 +81,23 @@ pub(super) enum Cmd {
     BootOncePxe,
     /// Boot rom UEFI HTTP Once
     BootOnceUefiHttp,
+    /// On next boot only, boot from the virtual CD-ROM
+    #[command(after_long_help = "\
+EXAMPLES:
+
+Boot once from virtual media that is already inserted:
+    $ nico-admin-cli redfish --address 192.0.2.10 --username admin --password mypassword boot-once-cd
+
+")]
+    BootOnceCd,
+    /// List the virtual media slots the BMC exposes
+    ShowVirtualMedia,
+    /// Insert an image into a virtual media slot
+    InsertVirtualMedia(VirtualMediaInsert),
+    /// Eject the image from a virtual media slot
+    EjectVirtualMedia(VirtualMediaKindArg),
+    /// Power off, insert an image, boot once from it, and power on
+    VirtualMediaBoot(VirtualMediaInsert),
     /// Delete all pending jobs
     ClearPending,
     /// Create new BMC user
@@ -691,4 +708,82 @@ pub(super) struct SetBios {
         help = "BIOS attributes to set in JSON, ex: {\"OperatingModes_ChooseOperatingMode\": \"MaximumPerformance\"}"
     )]
     pub(super) attributes: String,
+}
+
+/// Which virtual media slot kind to act on.
+#[derive(clap::ValueEnum, Debug, PartialEq, Eq, Clone, Copy, Default)]
+pub(super) enum MediaKind {
+    #[default]
+    Cd,
+    Dvd,
+    Floppy,
+    UsbStick,
+}
+
+impl From<MediaKind> for libredfish::VirtualMediaKind {
+    fn from(kind: MediaKind) -> Self {
+        match kind {
+            MediaKind::Cd => libredfish::VirtualMediaKind::Cd,
+            MediaKind::Dvd => libredfish::VirtualMediaKind::Dvd,
+            MediaKind::Floppy => libredfish::VirtualMediaKind::Floppy,
+            MediaKind::UsbStick => libredfish::VirtualMediaKind::UsbStick,
+        }
+    }
+}
+
+#[derive(Parser, Debug, PartialEq, Clone)]
+#[command(after_long_help = "\
+EXAMPLES:
+
+Insert an installer ISO into the virtual CD-ROM:
+    $ nico-admin-cli redfish --address 192.0.2.10 --username admin --password mypassword \
+    insert-virtual-media --image http://nico-pxe.forge:8080/public/installer.iso
+
+The BMC fetches the image itself, so the URL must be reachable from the BMC
+network, not only from the host network.
+
+")]
+pub(super) struct VirtualMediaInsert {
+    #[clap(long, help = "URL of the image the BMC should mount")]
+    pub(super) image: String,
+    #[clap(
+        long,
+        value_enum,
+        default_value_t = MediaKind::Cd,
+        help = "Virtual media slot kind (default: cd)"
+    )]
+    pub(super) kind: MediaKind,
+}
+
+#[derive(Parser, Debug, PartialEq, Clone)]
+#[command(after_long_help = "\
+EXAMPLES:
+
+Eject whatever is in the virtual CD-ROM:
+    $ nico-admin-cli redfish --address 192.0.2.10 --username admin --password mypassword \
+    eject-virtual-media
+
+")]
+pub(super) struct VirtualMediaKindArg {
+    #[clap(
+        long,
+        value_enum,
+        default_value_t = MediaKind::Cd,
+        help = "Virtual media slot kind (default: cd)"
+    )]
+    pub(super) kind: MediaKind,
+}
+
+impl VirtualMediaKindArg {
+    /// The slot kind as it is spelled on the wire.
+    pub(super) fn kind_name(&self) -> &'static str {
+        libredfish::VirtualMediaKind::from(self.kind).as_media_type()
+    }
+}
+
+impl VirtualMediaInsert {
+    /// The slot kind as it is spelled on the wire.
+    pub(super) fn kind_name(&self) -> &'static str {
+        libredfish::VirtualMediaKind::from(self.kind).as_media_type()
+    }
 }
