@@ -1124,6 +1124,12 @@ pub struct HostProfile {
     /// When `true` the ingestion state machine skips re-enabling lockdown
     /// after BIOS/UEFI configuration.
     pub disable_lockdown: bool,
+    /// When `true` this machine is designated as a control-plane machine, so
+    /// its management addresses stay usable while the control plane is down.
+    /// Defaulted on deserialization because snapshots written before this
+    /// field exists omit it.
+    #[serde(default)]
+    pub control_plane: bool,
 }
 
 impl HostProfile {
@@ -1140,6 +1146,7 @@ impl HostProfile {
                     .host_lifecycle_profile
                     .disable_lockdown
                     .unwrap_or_default(),
+                control_plane: d.host_lifecycle_profile.control_plane.unwrap_or_default(),
             },
             None => Self::default(),
         }
@@ -5989,10 +5996,12 @@ mod tests {
             "lockdown disabled (true)" {
                 HostProfile {
                     disable_lockdown: true,
+                    control_plane: false,
                 } => Yields((
-                    r#"{"disable_lockdown":true}"#.to_string(),
+                    r#"{"disable_lockdown":true,"control_plane":false}"#.to_string(),
                     HostProfile {
                         disable_lockdown: true,
+                        control_plane: false,
                     },
                 )),
             }
@@ -6000,10 +6009,25 @@ mod tests {
             "lockdown enabled (false)" {
                 HostProfile {
                     disable_lockdown: false,
+                    control_plane: false,
                 } => Yields((
-                    r#"{"disable_lockdown":false}"#.to_string(),
+                    r#"{"disable_lockdown":false,"control_plane":false}"#.to_string(),
                     HostProfile {
                         disable_lockdown: false,
+                        control_plane: false,
+                    },
+                )),
+            }
+
+            "control-plane designated (true)" {
+                HostProfile {
+                    disable_lockdown: false,
+                    control_plane: true,
+                } => Yields((
+                    r#"{"disable_lockdown":false,"control_plane":true}"#.to_string(),
+                    HostProfile {
+                        disable_lockdown: false,
+                        control_plane: true,
                     },
                 )),
             }
@@ -6015,6 +6039,7 @@ mod tests {
         let db_default = r#"{"disable_lockdown": false}"#;
         let profile: HostProfile = serde_json::from_str(db_default).unwrap();
         assert!(!profile.disable_lockdown);
+        assert!(!profile.control_plane);
     }
 
     #[test]
@@ -6022,7 +6047,8 @@ mod tests {
         assert_eq!(
             HostProfile::default(),
             HostProfile {
-                disable_lockdown: false
+                disable_lockdown: false,
+                control_plane: false,
             }
         );
     }
@@ -6049,6 +6075,17 @@ mod tests {
 
         data.host_lifecycle_profile.disable_lockdown = Some(false);
         assert!(!HostProfile::from_expected_machine(Some(&data)).disable_lockdown);
+    }
+
+    #[test]
+    fn host_profile_from_expected_resolves_control_plane() {
+        let mut data = ExpectedMachineData::default();
+
+        data.host_lifecycle_profile.control_plane = Some(true);
+        assert!(HostProfile::from_expected_machine(Some(&data)).control_plane);
+
+        data.host_lifecycle_profile.control_plane = Some(false);
+        assert!(!HostProfile::from_expected_machine(Some(&data)).control_plane);
     }
 
     #[test]
