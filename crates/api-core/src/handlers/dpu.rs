@@ -879,6 +879,10 @@ async fn get_managed_host_network_config_inner(
         },
         astra_config,
         use_admin_network_changed,
+        // The designation lives on the host, and every DPU of that host
+        // inherits it: a control-plane host is only reachable while its DPUs
+        // keep serving its network.
+        control_plane: snapshot.host_snapshot.host_profile.control_plane,
     };
 
     // If this all worked, we shouldn't emit a log line

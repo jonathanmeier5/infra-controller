@@ -69,9 +69,9 @@ use crate::network_monitor::{self, NetworkPingerType};
 use crate::util::{get_host_boot_timestamp, jittered_interval};
 use crate::{
     FMDS_MINIMUM_HBN_VERSION, HBNDeviceNames, NVUE_MINIMUM_HBN_VERSION, RunOptions, astra_weave,
-    command_line, ethernet_virtualization, extension_services, get_non_empty_str, hbn, health,
-    instance_metadata_endpoint, lldp, machine_inventory_updater, managed_files, mtu, netlink, nvue,
-    periodic_config_fetcher, pretty_cmd, sysfs, upgrade,
+    command_line, control_plane_designation, ethernet_virtualization, extension_services,
+    get_non_empty_str, hbn, health, instance_metadata_endpoint, lldp, machine_inventory_updater,
+    managed_files, mtu, netlink, nvue, periodic_config_fetcher, pretty_cmd, sysfs, upgrade,
 };
 
 // Main loop when running in daemon mode
@@ -482,6 +482,7 @@ pub(super) async fn setup_and_run(
         is_hbn_up: false,
         hbn_file_configs: hbn::HBNContainerFileConfigs::default(),
         seen_blank: false,
+        control_plane_designated: control_plane_designation::load(&agent_config.hbn.root_dir),
         has_logged_stable: false,
         version_check_time: std::time::Instant::now(),
         inventory_updater_time: std::time::Instant::now(),
@@ -566,6 +567,10 @@ struct MainLoop {
     is_hbn_up: bool,
     hbn_file_configs: hbn::HBNContainerFileConfigs,
     seen_blank: bool,
+    /// Whether this DPU's host is designated as a control-plane machine. Seeded
+    /// from persistent DPU storage so a cold start during an outage knows it
+    /// before the first successful fetch, then kept current by every fetch.
+    control_plane_designated: bool,
     has_logged_stable: bool,
     started_at: std::time::Instant,
     version_check_time: std::time::Instant,
@@ -937,6 +942,20 @@ async fn fetch_last_dhcp_requests(dhcp_grpc_server: Option<&str>) -> Vec<rpc::La
 }
 
 impl MainLoop {
+    /// Blanks this DPU's networking, on the second consecutive iteration that
+    /// produced no configuration. The delay is the safety margin the original
+    /// `seen_blank` check introduced, and it is kept here.
+    async fn reset_network_config(&mut self) {
+        if self.seen_blank {
+            ethernet_virtualization::reset(
+                &self.agent_config.hbn.root_dir,
+                self.agent_config.hbn.skip_reload,
+            )
+            .await;
+        }
+        self.seen_blank = true;
+    }
+
     /// Runs the MainLoop in endless mode
     async fn run(
         &mut self,
@@ -1106,8 +1125,8 @@ impl MainLoop {
         };
 
         // `read` does not block
-        match self.periodic_config_reader.net_conf_read() {
-            Some(conf) => {
+        match self.periodic_config_reader.net_conf_state() {
+            periodic_config_fetcher::NetworkConfigState::Known(conf) => {
                 // DHCP server only runs on the primary dpu or when using the tenant network
                 if !conf.use_admin_network || conf.is_primary_dpu {
                     status_out.last_dhcp_requests =
@@ -1547,21 +1566,29 @@ impl MainLoop {
                     // The cache advances only once nico-api has the report
                     self.lldp_cache.confirm_reported(lldp);
                 }
+                // Unconditional: the writer skips the disk when the contents
+                // already match, and recording every poll repairs a record that
+                // was damaged or removed between polls.
+                control_plane_designation::store(
+                    &self.agent_config.hbn.root_dir,
+                    conf.control_plane,
+                );
+                self.control_plane_designated = conf.control_plane;
                 self.seen_blank = false;
             }
-            None => {
-                // No network config means server can't find the DPU, usually because it was
-                // force-deleted. Only reset network config the _second_ time we can't find the
-                // DPU. Safety first.
-                if self.seen_blank {
-                    ethernet_virtualization::reset(
-                        &self.agent_config.hbn.root_dir,
-                        self.agent_config.hbn.skip_reload,
-                    )
-                    .await;
+            // No configuration to apply, either because the server cannot find the
+            // DPU or because it did not answer. `requires_reset` holds the rule
+            // that separates those. We don't record_network_status either way,
+            // because the server has told us nothing to report against.
+            state => {
+                if state.requires_reset(self.control_plane_designated) {
+                    self.reset_network_config().await;
+                } else {
+                    tracing::info!(
+                        "No network configuration available and this is a control-plane \
+                         machine; keeping the existing configuration"
+                    );
                 }
-                self.seen_blank = true;
-                // we don't record_network_status because the server doesn't know about this DPU
             }
         };
 

@@ -52,6 +52,7 @@ mod astra_weave;
 mod astra_xplane;
 mod command_line;
 pub mod containerd;
+mod control_plane_designation;
 mod dhcp;
 mod dhcp_server_grpc_client;
 mod ethernet_virtualization;

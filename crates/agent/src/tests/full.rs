@@ -1623,6 +1623,7 @@ async fn handle_netconf(AxumState(state): AxumState<Arc<Mutex<State>>>) -> impl 
     };
 
     let netconf = rpc::forge::ManagedHostNetworkConfigResponse {
+        control_plane: false,
         service_interfaces: vec![],
         service_vpc_slot_inventory: None,
         bgp_leaf_session_password: Some("this_is_not_a_real_password".to_string()),

@@ -557,6 +557,46 @@ packets received.
 
 For DHCP-related stuck states during ingestion, see the [WaitingForNetworkConfig playbook](../playbooks/stuck_objects/waiting_for_network_config.md).
 
+<a id="dpu-networking-while-nico-is-unreachable"></a>
+
+### 2.4 DPU Networking While NICo Is Unreachable
+
+The DPU agent asks `nico-api` for its network configuration at a regular
+interval. Two different results leave it with no configuration, and the agent
+treats them differently:
+
+| Result | Meaning | What the agent does |
+|---|---|---|
+| `nico-api` answers `NotFound` | The DPU was deleted | Blanks the DPU networking on the second consecutive answer |
+| `nico-api` does not answer | Nothing is known | Depends on the control-plane designation |
+
+Blanking stops the DHCP relay and the DPU-local DHCP server, and deletes the
+HBN startup configuration, so a later reboot brings back no configuration. This
+is what keeps a deleted machine off the network.
+
+When `nico-api` does not answer, an undesignated DPU blanks its networking the
+same way. A DPU whose host sets
+[`host_lifecycle_profile.control_plane`](ingesting-hosts.md#per-host-fields-with-the-admin-cli)
+keeps its configuration instead, so its host can boot to its last known state
+while NICo is down. The designation only changes this case: a designated DPU
+that `nico-api` reports as `NotFound` is still blanked, because `nico-api` was
+reachable and said the DPU is gone.
+
+A designated DPU holds its configuration for as long as `nico-api` stays
+unreachable. A DPU deleted during an outage therefore keeps serving its old
+configuration until `nico-api` answers again.
+
+The agent records the designation on the DPU, because a DPU that restarts
+during an outage has to apply the rule before it can reach `nico-api`. The
+record is written on every successful fetch, so a DPU that has never reached
+`nico-api` is undesignated. Read the designation `nico-api` currently serves
+with:
+
+```bash
+nico-admin-cli --format json dpu network config \
+    --machine-id 12345678-1234-5678-90ab-cdef01234567
+```
+
 ---
 
 ## 3. DNS Configuration
