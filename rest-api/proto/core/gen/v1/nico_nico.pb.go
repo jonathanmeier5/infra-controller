@@ -29179,8 +29179,16 @@ type ManagedHostNetworkConfigResponse struct {
 	// not supply an inventory; present and empty means the deployment has zero
 	// service slots.
 	ServiceVpcSlotInventory *ServiceVpcSlotInventory `protobuf:"bytes,122,opt,name=service_vpc_slot_inventory,json=serviceVpcSlotInventory,proto3,oneof" json:"service_vpc_slot_inventory,omitempty"`
-	unknownFields           protoimpl.UnknownFields
-	sizeCache               protoimpl.SizeCache
+	// True when the receiving DPU belongs to a host designated as a control-plane
+	// machine. A designated DPU keeps its HBN and DPU-local DHCP configuration
+	// while Core is unreachable, so the host can boot to its last known state
+	// without the control plane. The agent records the designation on persistent
+	// DPU storage, because a cold start during an outage must apply the rule
+	// before it reaches Core. Older Core versions do not send this field, so a
+	// DPU reads it as undesignated and keeps the unconditional reset behavior.
+	ControlPlane  bool `protobuf:"varint,123,opt,name=control_plane,json=controlPlane,proto3" json:"control_plane,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ManagedHostNetworkConfigResponse) Reset() {
@@ -29519,6 +29527,13 @@ func (x *ManagedHostNetworkConfigResponse) GetServiceVpcSlotInventory() *Service
 		return x.ServiceVpcSlotInventory
 	}
 	return nil
+}
+
+func (x *ManagedHostNetworkConfigResponse) GetControlPlane() bool {
+	if x != nil {
+		return x.ControlPlane
+	}
+	return false
 }
 
 // Resolved network state for one service interface on the receiving DPU.
@@ -77596,7 +77611,7 @@ const file_nico_nico_proto_rawDesc = "" +
 	"\x13MachineHardwareInfo\x12*\n" +
 	"\x04gpus\x18\x01 \x03(\v2\x16.machine_discovery.GpuR\x04gpus\"Z\n" +
 	"\x1fManagedHostNetworkConfigRequest\x127\n" +
-	"\x0edpu_machine_id\x18\x01 \x01(\v2\x11.common.MachineIdR\fdpuMachineId\"\xc7\x18\n" +
+	"\x0edpu_machine_id\x18\x01 \x01(\v2\x11.common.MachineIdR\fdpuMachineId\"\xec\x18\n" +
 	" ManagedHostNetworkConfigResponse\x12\x10\n" +
 	"\x03asn\x18\x02 \x01(\rR\x03asn\x12!\n" +
 	"\fdhcp_servers\x18\x03 \x03(\tR\vdhcpServers\x12\x1d\n" +
@@ -77647,7 +77662,8 @@ const file_nico_nico_proto_rawDesc = "" +
 	"\fastra_config\x18w \x01(\v2\x12.forge.AstraConfigH\x0fR\vastraConfig\x88\x01\x01\x12>\n" +
 	"\x19use_admin_network_changed\x18x \x01(\bH\x10R\x16useAdminNetworkChanged\x88\x01\x01\x12W\n" +
 	"\x12service_interfaces\x18y \x03(\v2(.forge.ManagedHostServiceInterfaceConfigR\x11serviceInterfaces\x12`\n" +
-	"\x1aservice_vpc_slot_inventory\x18z \x01(\v2\x1e.forge.ServiceVpcSlotInventoryH\x11R\x17serviceVpcSlotInventory\x88\x01\x01B\x0e\n" +
+	"\x1aservice_vpc_slot_inventory\x18z \x01(\v2\x1e.forge.ServiceVpcSlotInventoryH\x11R\x17serviceVpcSlotInventory\x88\x01\x01\x12#\n" +
+	"\rcontrol_plane\x18{ \x01(\bR\fcontrolPlaneB\x0e\n" +
 	"\f_instance_idB\x1e\n" +
 	"\x1c_network_virtualization_typeB\n" +
 	"\n" +

@@ -5510,6 +5510,15 @@ message ManagedHostNetworkConfigResponse {
   // not supply an inventory; present and empty means the deployment has zero
   // service slots.
   optional ServiceVpcSlotInventory service_vpc_slot_inventory = 122;
+
+  // True when the receiving DPU belongs to a host designated as a control-plane
+  // machine. A designated DPU keeps its HBN and DPU-local DHCP configuration
+  // while Core is unreachable, so the host can boot to its last known state
+  // without the control plane. The agent records the designation on persistent
+  // DPU storage, because a cold start during an outage must apply the rule
+  // before it reaches Core. Older Core versions do not send this field, so a
+  // DPU reads it as undesignated and keeps the unconditional reset behavior.
+  bool control_plane = 123;
 }
 
 // Resolved network state for one service interface on the receiving DPU.

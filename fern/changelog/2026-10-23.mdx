@@ -42,7 +42,7 @@ Enabling NVLink partitioning on a rack with running instances removes the NMX-C 
 
 ## Control-plane machine designation — unreleased
 
-An administrator can now designate an Expected Machine as a control-plane machine. The designation records that the machine and its DPU must complete a full power-on cycle while the NICo control plane is down. It does not change host behavior yet; later work reads it to write static addresses into the BMC and to keep the DPU HBN configuration.
+An administrator can now designate an Expected Machine as a control-plane machine. The designation records that the machine and its DPU must complete a full power-on cycle while the NICo control plane is down. Later work reads it to write static addresses into the BMC.
 
 Set the designation with the new `host_lifecycle_profile.control_plane` field:
 
@@ -56,4 +56,21 @@ The field is optional and defaults to unset, so existing machines and manifests 
 
 <Note title="Address policy requirement">
 A designated machine must use a `fixed` or `retained` IP allocation on every `host_bmc`, `dpu_bmc`, and `dpu_os` interface. NICo rejects the designation when one of these interfaces resolves to `dynamic`, because a DHCP address is not available during the outage that the designation exists for. Host data interfaces are not restricted.
+</Note>
+
+## DPU keeps its HBN configuration across a control-plane outage — unreleased
+
+The DPU agent used to blank its networking whenever it had no network configuration to apply. It could not tell a deleted DPU from a `nico-api` it simply could not reach, so a DPU that restarted during an outage deleted its own HBN startup configuration and stopped serving DHCP. A control-plane host behind that DPU could not then boot without NICo, which is what the designation exists to allow.
+
+The agent now acts on the answer `nico-api` gave, not on the absence of one:
+
+| Result | What the agent does |
+| --- | --- |
+| `nico-api` answers `NotFound` | Blanks the DPU networking on the second consecutive answer, for every DPU |
+| `nico-api` does not answer | A designated DPU keeps its configuration; an undesignated DPU blanks it as before |
+
+A DPU is designated when its host sets `host_lifecycle_profile.control_plane`. The agent records the designation on the DPU on every successful fetch, so a DPU that restarts during an outage still knows it. A DPU that has never reached `nico-api` is undesignated.
+
+<Note title="A designated DPU deleted during an outage keeps running">
+Blanking is what keeps a deleted machine off the network, and a designated DPU no longer blanks while `nico-api` is unreachable. A DPU deleted during an outage therefore keeps serving its old configuration until `nico-api` answers again and reports it as `NotFound`. There is no time limit on this retention.
 </Note>
